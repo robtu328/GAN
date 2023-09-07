@@ -1,0 +1,97 @@
+from collections import OrderedDict
+
+import torch
+import numpy as np
+
+from concern.config import Configurable, State
+from .data_process import DataProcess
+import cv2
+
+
+class MakeICDARData(DataProcess):
+    shrink_ratio = State(default=0.4)
+
+    def __init__(self, debug=False, cmd={}, **kwargs):
+        self.load_all(**kwargs)
+
+        self.debug = debug
+        if 'debug' in cmd:
+            self.debug = cmd['debug']
+
+    def process(self, data):
+        polygons = []
+        line_text = []
+        ignore_tags = []
+        polygons_char = []
+        line_char = []
+        ignore_tags_char = []
+        
+        
+        
+        annotations = data['polys']
+        for annotation in annotations:
+            polygons.append(np.array(annotation['points']))
+            # polygons.append(annotation['points'])
+            ignore_tags.append(annotation['ignore'])
+            line_text.append(annotation['text'])
+        ignore_tags = np.array(ignore_tags, dtype=np.uint8)
+        
+        annotations = data['polys_char']
+        for annotation in annotations:
+            polygons_char.append(np.array(annotation['points']))
+            # polygons.append(annotation['points'])
+            ignore_tags_char.append(annotation['ignore'])
+            line_char.append(annotation['text'])
+        ignore_tags_char = np.array(ignore_tags_char, dtype=np.uint8)
+        
+        
+        filename = data.get('filename', data['data_id'])
+        self.debug=False
+        if self.debug:
+            self.draw_polygons(data['image'], polygons, ignore_tags)
+            self.draw_polygons(data['image'], polygons_char, ignore_tags_char)
+            cv2.imshow("image", data['image'].astype('uint8'))
+            cv2.waitKey()
+        shape = np.array(data['shape'])
+        return OrderedDict(image=data['image'],
+                           polygons=polygons,
+                           ignore_tags=ignore_tags,
+                           polygons_char=polygons_char,
+                           ignore_tags_char=ignore_tags_char,                           
+                           shape=shape,
+                           filename=filename,
+                           is_training=data['is_training'], 
+                           lines_text=line_text, 
+                           lines_char=line_char, 
+                           index=data['index'],
+                           )
+
+    def draw_polygons(self, image, polygons, ignore_tags):
+        for i in range(len(polygons)):
+            polygon = polygons[i].reshape(-1, 2).astype(np.int32)
+            ignore = ignore_tags[i]
+            if ignore:
+                color = (255, 0, 0)  # depict ignorable polygons in blue
+            else:
+                color = (0, 0, 255)  # depict polygons in red
+
+            cv2.polylines(image, [polygon], True, color, 1)
+    polylines = staticmethod(draw_polygons)
+
+
+class ICDARCollectFN(Configurable):
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def __call__(self, batch):
+        data_dict = OrderedDict()
+        for sample in batch:
+            for k, v in sample.items():
+                if k not in data_dict:
+                    data_dict[k] = []
+                if isinstance(v, np.ndarray):
+                    v = torch.from_numpy(v)
+                data_dict[k].append(v)
+        data_dict['image'] = torch.stack(data_dict['image'], 0)
+        return data_dict
+
